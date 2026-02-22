@@ -116,7 +116,7 @@ Once the bot is online in your server, you can type `/` to see its commands:
 
 ---
 
-## ⚖️ Disclaimer
+## Disclaimer
 This tool is not affiliated with, maintained, authorized, endorsed, or sponsored by Roblox Corporation or any of its affiliates or subsidiaries.
 
 **Use at your own risk.** Automated rejoining may violate certain game rules or platform policies. The developers of this tool are not responsible for any consequences resulting from its use.
