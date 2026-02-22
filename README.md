@@ -1,5 +1,8 @@
 # Roblox Auto-Rejoin Monitor + Discord Bot
 
+> [!IMPORTANT]
+> **Windows Only:** This tool is specifically designed for the Windows Roblox client and **will not work** on Linux or macOS.
+
 ## What it is and What it Does
 This toolset allows you to AFK farm or play Roblox without worrying about crashes or sudden disconnections. It runs entirely on your local Windows PC and continuously monitors your active Roblox session. 
 
@@ -110,3 +113,10 @@ Once the bot is online in your server, you can type `/` to see its commands:
 - If Roblox crashes, the monitor waits roughly 5 seconds (to ensure the process is fully closed) before auto-rejoining. 
 - You can change the wait time by editing `REJOIN_DELAY` inside `roblox_monitor.py`.
 - If slash commands don't show up in Discord right away, either wait a few minutes, restart the bot, or make sure you've set the `GUILD_ID` properly in the code.
+
+---
+
+## ⚖️ Disclaimer
+This tool is not affiliated with, maintained, authorized, endorsed, or sponsored by Roblox Corporation or any of its affiliates or subsidiaries.
+
+**Use at your own risk.** Automated rejoining may violate certain game rules or platform policies. The developers of this tool are not responsible for any consequences resulting from its use.
