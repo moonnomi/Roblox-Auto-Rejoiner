@@ -44,14 +44,29 @@ pip install psutil discord.py requests
 8. Under **Bot Permissions**, check `Send Messages` and `Use Slash Commands`.
 9. Copy the generated URL at the bottom, paste it into your browser, and invite the bot to your personal Discord server.
 
-### Step 4 — Configure the Bot Files
-1. Right-click `discord_bot.py` and select **Edit with Notepad** (or any text editor).
-2. Find the line at the top:
+### Step 4 — Configure the Scripts
+
+**1. Configure the Monitor**
+Right-click `roblox_monitor.py` and select **Edit with Notepad** (or any text editor). At the top, you will see a config section:
+```python
+# ─── CONFIG ───────────────────────────────────────────────────────────────────
+PLACE_ID = "PUT_PLACE_ID_HERE"
+GAME_NAME = "GAME_NAME_HERE" # Optional, just for display
+GAME_URL = f"https://www.roblox.com/games/{PLACE_ID}"
+REJOIN_DELAY = 5          # seconds to wait before rejoining after crash
+CHECK_INTERVAL = 3        # seconds between process checks
+SOCKET_HOST = "127.0.0.1"
+SOCKET_PORT = 45678
+```
+You **must** set your target game manually by replacing `"PUT_PLACE_ID_HERE"` with the actual ID. You can find the Place ID in your browser address bar when on the game's page (e.g., in `roblox.com/games/12345678/Game` the ID is `12345678`). You can optionally change the `GAME_NAME` too. Save the file when done.
+
+**2. Configure the Discord Bot**
+Right-click `discord_bot.py` and select **Edit with Notepad**. Find this line at the top:
 ```python
 BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
 ```
-3. Replace `"PASTE_YOUR_BOT_TOKEN_HERE"` with the actual token you copied in Step 3.
-4. *(Optional)* Find `GUILD_ID` in the same file and set it to your Discord server's ID. This makes slash commands update instantly rather than waiting up to an hour. (To get the ID: Enable Developer Mode in Discord Settings > Advanced, then right-click your server icon and click "Copy Server ID").
+Replace `"PASTE_YOUR_BOT_TOKEN_HERE"` with the exact bot token you copied in Step 3. 
+*(Optional)* Find `GUILD_ID` in the same file and set it to your Discord server's ID. This makes slash commands update instantly rather than waiting up to an hour. (To get the ID: Enable Developer Mode in Discord Settings > Advanced, then right-click your server icon and click "Copy Server ID"). Save the file when done.
 
 ### Step 5 — Run Everything
 You will need two Command Prompt windows running simultaneously in the folder where your scripts are.

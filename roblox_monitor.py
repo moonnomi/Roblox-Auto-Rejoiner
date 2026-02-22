@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 PLACE_ID = "PUT_PLACE_ID_HERE"
-GAME_NAME = "GAME_NAME_HERE"
+GAME_NAME = "GAME_NAME_HERE" # Optional, just for display
 GAME_URL = f"https://www.roblox.com/games/{PLACE_ID}"
 REJOIN_DELAY = 5          # seconds to wait before rejoining after crash
 CHECK_INTERVAL = 3        # seconds between process checks
