@@ -70,7 +70,7 @@ Make sure to leave both windows open! As long as they are running, your session 
 
 ---
 
-## 💬 Discord Commands Overview
+## Discord Commands Overview
 
 Once the bot is online in your server, you can type `/` to see its commands:
 
@@ -87,7 +87,7 @@ Once the bot is online in your server, you can type `/` to see its commands:
 
 ---
 
-## 💡 Pro Tips & Troubleshooting
+## Pro Tips & Troubleshooting
 - **Keep both CMD windows open** while you play or AFK. If you close them, it stops working.
 - If Roblox crashes, the monitor waits roughly 5 seconds (to ensure the process is fully closed) before auto-rejoining. 
 - You can change the wait time by editing `REJOIN_DELAY` inside `roblox_monitor.py`.
