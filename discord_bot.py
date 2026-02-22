@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE" # Get this from the Discord Developer Portal when you create your bot
 GUILD_ID = None          # Set to your server's integer ID for instant slash cmd updates,
                          # or leave None for global (takes up to 1 hour to propagate)
+CHANNEL_ID = None        # Set to the channel ID where crash announcements should be sent (integer)
 SOCKET_HOST = "127.0.0.1"
 SOCKET_PORT = 45678
 # ──────────────────────────────────────────────────────────────────────────────
@@ -85,6 +86,53 @@ async def on_ready():
     else:
         await tree.sync()
     print(f"Bot online as {client.user}")
+    
+    if not check_crashes.is_running():
+        check_crashes.start()
+
+
+last_known_crash_time = None
+
+@tasks.loop(seconds=5)
+async def check_crashes():
+    global last_known_crash_time
+    if not CHANNEL_ID:
+        return
+        
+    state = query_monitor("GET_STATE")
+    if not isinstance(state, dict):
+        return
+        
+    current_crash_time = state.get("last_crash")
+    if current_crash_time and current_crash_time != last_known_crash_time:
+        if last_known_crash_time is not None:
+            # A new crash occurred!
+            channel = client.get_channel(CHANNEL_ID)
+            embed = discord.Embed(
+                title="💥 Roblox Crashed!",
+                description=f"Crash detected for **{state.get('game_name', 'Unknown')}** (`{state.get('place_id', 'Unknown')}`).\nRejoining in progress...",
+                color=COLOR_ERR
+            )
+            embed.add_field(name="Total Crashes", value=str(state.get("crash_count", 0)))
+            embed.add_field(name="Time", value=fmt_time(current_crash_time))
+            
+            if channel:
+                try:
+                    await channel.send(embed=embed)
+                except Exception as e:
+                    print(f"Failed to send crash announcement: {e}")
+            else:
+                try:
+                    channel = await client.fetch_channel(CHANNEL_ID)
+                    if channel:
+                        await channel.send(embed=embed)
+                except Exception as e:
+                    print(f"Could not fetch or send to channel ID {CHANNEL_ID}: {e}")
+        last_known_crash_time = current_crash_time
+
+@check_crashes.before_loop
+async def before_check_crashes():
+    await client.wait_until_ready()
 
 
 # ─── SLASH COMMANDS ───────────────────────────────────────────────────────────

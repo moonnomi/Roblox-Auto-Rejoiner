@@ -61,12 +61,15 @@ SOCKET_PORT = 45678
 You **must** set your target game manually by replacing `"PUT_PLACE_ID_HERE"` with the actual ID. You can find the Place ID in your browser address bar when on the game's page (e.g., in `roblox.com/games/12345678/Game` the ID is `12345678`). You can optionally change the `GAME_NAME` too. Save the file when done.
 
 **2. Configure the Discord Bot**
-Right-click `discord_bot.py` and select **Edit with Notepad**. Find this line at the top:
+Right-click `discord_bot.py` and select **Edit with Notepad**. Find the configuration section at the top:
 ```python
 BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+GUILD_ID = None
+CHANNEL_ID = None
 ```
-Replace `"PASTE_YOUR_BOT_TOKEN_HERE"` with the exact bot token you copied in Step 3. 
-*(Optional)* Find `GUILD_ID` in the same file and set it to your Discord server's ID. This makes slash commands update instantly rather than waiting up to an hour. (To get the ID: Enable Developer Mode in Discord Settings > Advanced, then right-click your server icon and click "Copy Server ID"). Save the file when done.
+- Replace `"PASTE_YOUR_BOT_TOKEN_HERE"` with the exact bot token you copied in Step 3.
+- **Important for Crash Announcements:** Change `CHANNEL_ID = None` to the ID of the Discord channel where you want the bot to post crash alerts (e.g., `CHANNEL_ID = 12345678901234`). To get a Channel ID, right-click the channel and click "Copy Channel ID" (requires Developer Mode).
+- *(Optional)* Set `GUILD_ID` to your Discord server's ID. This makes slash commands update instantly rather than waiting up to an hour. (To get the server ID, right-click your server icon and click "Copy Server ID"). Save the file when done.
 
 ### Step 5 — Run Everything
 You will need two Command Prompt windows running simultaneously in the folder where your scripts are.
