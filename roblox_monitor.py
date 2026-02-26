@@ -21,30 +21,45 @@ def log(msg: str):
     print(f"[{ts}] {msg}")
 
 def get_game_name(place_id):
-    """Fetches the game name from the Roblox API."""
+    """Fetches the game name using a multi-step fallback process."""
     if place_id == "PUT_PLACE_ID_HERE":
         return "Not Set"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     try:
-        url = f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={place_id}"
-        # Adding a User-Agent helps avoid being blocked by Roblox's API
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        response = requests.get(url, headers=headers, timeout=10)
+        # Step 1: Get the Universe ID from the Place ID (usually public)
+        universe_url = f"https://apis.roblox.com/universes/v1/places/{place_id}/universe"
+        u_resp = requests.get(universe_url, headers=headers, timeout=5)
         
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list) and len(data) > 0:
-                return data[0].get("name", "Unknown Game")
-            elif isinstance(data, dict) and "data" in data:
-                # Some Roblox endpoints wrap results in a 'data' key
-                inner_data = data["data"]
-                if inner_data and len(inner_data) > 0:
-                    return inner_data[0].get("name", "Unknown Game")
-        else:
-            log(f"API Error: {response.status_code} - {response.text}")
+        if u_resp.status_code == 200:
+            universe_id = u_resp.json().get("universeId")
+            
+            # Step 2: Get Game Details using the Universe ID
+            details_url = f"https://games.roblox.com/v1/games?universeIds={universe_id}"
+            d_resp = requests.get(details_url, headers=headers, timeout=5)
+            
+            if d_resp.status_code == 200:
+                data = d_resp.json().get("data", [])
+                if data:
+                    return data[0].get("name", "Unknown Game")
+
+        # Step 3: Final fallback - Scrape the title from the Roblox webpage
+        log("API restricted. Attempting web scraping fallback...")
+        web_url = f"https://www.roblox.com/games/{place_id}/"
+        w_resp = requests.get(web_url, headers=headers, timeout=5)
+        if w_resp.status_code == 200:
+            import re
+            # Roblox titles are formatted as "Name - Roblox"
+            title_match = re.search(r"<title>(.*?) - Roblox</title>", w_resp.text)
+            if title_match:
+                return title_match.group(1).strip()
+
     except Exception as e:
-        print(f"Error fetching game name: {e}")
+        log(f"Error during game name detection: {e}")
+    
     return "Unknown Game"
 
 # Auto-fetch game info
