@@ -54,14 +54,13 @@ Right-click `roblox_monitor.py` and select **Edit with Notepad** (or any text ed
 ```python
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 PLACE_ID = "PUT_PLACE_ID_HERE"
-GAME_NAME = "GAME_NAME_HERE" # Optional, just for display
-GAME_URL = f"https://www.roblox.com/games/{PLACE_ID}"
 REJOIN_DELAY = 5          # seconds to wait before rejoining after crash
 CHECK_INTERVAL = 3        # seconds between process checks
 SOCKET_HOST = "127.0.0.1"
 SOCKET_PORT = 45678
+# ──────────────────────────────────────────────────────────────────────────────
 ```
-You **must** set your target game manually by replacing `"PUT_PLACE_ID_HERE"` with the actual ID. You can find the Place ID in your browser address bar when on the game's page (e.g., in `roblox.com/games/12345678/Game` the ID is `12345678`). You can optionally change the `GAME_NAME` too. Save the file when done.
+You only need to set the `PLACE_ID`. Replace `"PUT_PLACE_ID_HERE"` with the actual ID of your game. The **Game Name is now automatically detected** using the Roblox API! Save the file when done.
 
 **2. Configure the Discord Bot**
 Right-click `discord_bot.py` and select **Edit with Notepad**. Find the configuration section at the top:

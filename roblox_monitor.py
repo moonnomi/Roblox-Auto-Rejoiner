@@ -1,4 +1,3 @@
-
 import psutil
 import subprocess
 import time
@@ -7,17 +6,34 @@ import socket
 import threading
 import os
 import sys
+import requests
 from datetime import datetime, timedelta
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 PLACE_ID = "PUT_PLACE_ID_HERE"
-GAME_NAME = "GAME_NAME_HERE" # Optional, just for display
-GAME_URL = f"https://www.roblox.com/games/{PLACE_ID}"
 REJOIN_DELAY = 5          # seconds to wait before rejoining after crash
 CHECK_INTERVAL = 3        # seconds between process checks
 SOCKET_HOST = "127.0.0.1"
 SOCKET_PORT = 45678
 # ──────────────────────────────────────────────────────────────────────────────
+def get_game_name(place_id):
+    """Fetches the game name from the Roblox API."""
+    if place_id == "PUT_PLACE_ID_HERE":
+        return "Not Set"
+    try:
+        url = f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={place_id}"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                return data[0].get("name", "Unknown Game")
+    except Exception as e:
+        log(f"Error fetching game name: {e}")
+    return "Unknown Game"
+
+# Auto-fetch game info
+GAME_NAME = get_game_name(PLACE_ID)
+GAME_URL = f"https://www.roblox.com/games/{PLACE_ID}"
 
 state = {
     "monitoring": True,
