@@ -16,19 +16,35 @@ CHECK_INTERVAL = 3        # seconds between process checks
 SOCKET_HOST = "127.0.0.1"
 SOCKET_PORT = 45678
 # ──────────────────────────────────────────────────────────────────────────────
+def log(msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
+
 def get_game_name(place_id):
     """Fetches the game name from the Roblox API."""
     if place_id == "PUT_PLACE_ID_HERE":
         return "Not Set"
     try:
         url = f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={place_id}"
-        response = requests.get(url, timeout=10)
+        # Adding a User-Agent helps avoid being blocked by Roblox's API
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        
         if response.status_code == 200:
             data = response.json()
-            if data and len(data) > 0:
+            if isinstance(data, list) and len(data) > 0:
                 return data[0].get("name", "Unknown Game")
+            elif isinstance(data, dict) and "data" in data:
+                # Some Roblox endpoints wrap results in a 'data' key
+                inner_data = data["data"]
+                if inner_data and len(inner_data) > 0:
+                    return inner_data[0].get("name", "Unknown Game")
+        else:
+            log(f"API Error: {response.status_code} - {response.text}")
     except Exception as e:
-        log(f"Error fetching game name: {e}")
+        print(f"Error fetching game name: {e}")
     return "Unknown Game"
 
 # Auto-fetch game info
@@ -50,9 +66,6 @@ state = {
 state_lock = threading.Lock()
 
 
-def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}")
 
 
 def is_roblox_running() -> bool:
