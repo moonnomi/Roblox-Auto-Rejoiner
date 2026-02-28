@@ -87,15 +87,16 @@ async def on_ready():
         await tree.sync()
     print(f"Bot online as {client.user}")
     
-    if not check_crashes.is_running():
-        check_crashes.start()
+    if not check_updates.is_running():
+        check_updates.start()
 
 
 last_known_crash_time = None
+last_known_freeze_time = None
 
 @tasks.loop(seconds=5)
-async def check_crashes():
-    global last_known_crash_time
+async def check_updates():
+    global last_known_crash_time, last_known_freeze_time
     if not CHANNEL_ID:
         return
         
@@ -103,42 +104,57 @@ async def check_crashes():
     if not isinstance(state, dict):
         return
         
+    channel = client.get_channel(CHANNEL_ID)
+    if not channel:
+        try:
+            channel = await client.fetch_channel(CHANNEL_ID)
+        except Exception:
+            return
+
+    # Check for Crashes
     current_crash_time = state.get("last_crash")
     if current_crash_time and current_crash_time != last_known_crash_time:
         if last_known_crash_time is not None:
-            # A new crash occurred!
-            channel = client.get_channel(CHANNEL_ID)
             embed = discord.Embed(
                 title="💥 Roblox Crashed!",
-                description=f"Crash detected for **{state.get('game_name', 'Unknown')}** (`{state.get('place_id', 'Unknown')}`).\nRejoining in progress...",
+                description=f"Crash detected for **{state.get('game_name', 'Unknown')}**.\nRejoining in progress...",
                 color=COLOR_ERR
             )
             embed.add_field(name="Total Crashes", value=str(state.get("crash_count", 0)))
             embed.add_field(name="Time", value=fmt_time(current_crash_time))
-            
-            if channel:
-                try:
-                    await channel.send(embed=embed)
-                except Exception as e:
-                    print(f"Failed to send crash announcement: {e}")
-            else:
-                try:
-                    channel = await client.fetch_channel(CHANNEL_ID)
-                    if channel:
-                        await channel.send(embed=embed)
-                except Exception as e:
-                    print(f"Could not fetch or send to channel ID {CHANNEL_ID}: {e}")
+            try:
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"Failed to send crash notification: {e}")
         last_known_crash_time = current_crash_time
 
-@check_crashes.before_loop
-async def before_check_crashes():
+    # Check for Freezes
+    current_freeze_time = state.get("last_freeze")
+    if current_freeze_time and current_freeze_time != last_known_freeze_time:
+        if last_known_freeze_time is not None:
+            embed = discord.Embed(
+                title="❄️ Roblox Frozen!",
+                description=f"**{state.get('game_name', 'Unknown')}** is Not Responding.\nForce-closing and rejoining...",
+                color=COLOR_WARN
+            )
+            embed.add_field(name="Total Freezes", value=str(state.get("freeze_count", 0)))
+            embed.add_field(name="Time", value=fmt_time(current_freeze_time))
+            try:
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"Failed to send freeze notification: {e}")
+        last_known_freeze_time = current_freeze_time
+
+@check_updates.before_loop
+async def before_check_updates():
     await client.wait_until_ready()
 
 
 # ─── SLASH COMMANDS ───────────────────────────────────────────────────────────
 
 @tree.command(name="status", description="Show the full monitor status")
-async def cmd_status(interaction: discord.Interaction):
+@app_commands.describe(screenshot="Whether to include a screenshot of the Roblox window")
+async def cmd_status(interaction: discord.Interaction, screenshot: bool = False):
     state = query_monitor("GET_STATE")
 
     if state is None:
@@ -150,17 +166,27 @@ async def cmd_status(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed)
         return
 
-    roblox_icon = "🟢" if state["roblox_running"] else "🔴"
-    monitor_icon = "✅" if state["monitoring"] else "⏸️"
+    roblox_icon = "🟢" if state.get("roblox_running") else "🔴"
+    monitor_icon = "✅" if state.get("monitoring") else "⏸️"
 
-    embed = discord.Embed(title="📊 Monitor Status", color=COLOR_OK if state["roblox_running"] else COLOR_WARN)
-    embed.add_field(name="Roblox", value=f"{roblox_icon} {'Running' if state['roblox_running'] else 'Not Running'}", inline=True)
-    embed.add_field(name="Monitor", value=f"{monitor_icon} {state['status_message']}", inline=True)
-    embed.add_field(name="Crashes", value=f"💥 {state['crash_count']}", inline=True)
-    embed.add_field(name="Last Crash", value=fmt_time(state["last_crash"]), inline=True)
-    embed.add_field(name="Last Rejoin", value=fmt_time(state["last_rejoin"]), inline=True)
-    embed.add_field(name="Monitor Uptime", value=uptime_str(state["monitor_start"]), inline=True)
+    embed = discord.Embed(title="📊 Monitor Status", color=COLOR_OK if state.get("roblox_running") else COLOR_WARN)
+    embed.add_field(name="Roblox", value=f"{roblox_icon} {'Running' if state.get('roblox_running') else 'Not Running'}", inline=True)
+    embed.add_field(name="Monitor", value=f"{monitor_icon} {state.get('status_message', 'Unknown')}", inline=True)
+    embed.add_field(name="Crashes", value=f"💥 {state.get('crash_count', 0)}", inline=True)
+    embed.add_field(name="Freezes", value=f"❄️ {state.get('freeze_count', 0)}", inline=True)
+    embed.add_field(name="Last Crash/Freeze", value=fmt_time(state.get("last_crash") or state.get("last_freeze")), inline=True)
+    embed.add_field(name="Last Rejoin", value=fmt_time(state.get("last_rejoin")), inline=True)
+    embed.add_field(name="Monitor Uptime", value=uptime_str(state.get("monitor_start")), inline=True)
     embed.set_footer(text="Roblox Auto-Rejoin Monitor")
+    
+    if screenshot:
+        screenshot_path = query_monitor("GET_SCREENSHOT")
+        if screenshot_path and not screenshot_path.startswith("ERR:"):
+            file = discord.File(screenshot_path, filename="status_ss.png")
+            embed.set_image(url="attachment://status_ss.png")
+            await interaction.response.send_message(file=file, embed=embed)
+            return
+            
     await interaction.response.send_message(embed=embed)
 
 
@@ -192,7 +218,7 @@ async def cmd_placeid(interaction: discord.Interaction):
     )
 
 
-@tree.command(name="crashes", description="Show the crash count and history")
+@tree.command(name="crashes", description="Show conflict and freeze history")
 async def cmd_crashes(interaction: discord.Interaction):
     state = query_monitor("GET_STATE")
 
@@ -200,10 +226,15 @@ async def cmd_crashes(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
         return
 
-    embed = discord.Embed(title="💥 Crash Report", color=COLOR_WARN if state["crash_count"] > 0 else COLOR_OK)
-    embed.add_field(name="Total Crashes", value=str(state["crash_count"]), inline=True)
-    embed.add_field(name="Last Crash", value=fmt_time(state["last_crash"]), inline=True)
-    embed.add_field(name="Last Rejoin", value=fmt_time(state["last_rejoin"]), inline=True)
+    embed = discord.Embed(
+        title="💥 Crash & ❄️ Freeze Report", 
+        color=COLOR_WARN if (state.get("crash_count", 0) > 0 or state.get("freeze_count", 0) > 0) else COLOR_OK
+    )
+    embed.add_field(name="Total Crashes", value=str(state.get("crash_count", 0)), inline=True)
+    embed.add_field(name="Total Freezes", value=str(state.get("freeze_count", 0)), inline=True)
+    embed.add_field(name="Last Crash", value=fmt_time(state.get("last_crash")), inline=True)
+    embed.add_field(name="Last Freeze", value=fmt_time(state.get("last_freeze")), inline=True)
+    embed.add_field(name="Last Rejoin", value=fmt_time(state.get("last_rejoin")), inline=True)
     await interaction.response.send_message(embed=embed)
 
 
@@ -246,6 +277,33 @@ async def cmd_rejoin(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
     else:
         await interaction.response.send_message("🔄 Rejoin command sent! Roblox should open shortly.")
+
+
+@tree.command(name="current_screen", description="Take a screenshot of the Roblox window")
+async def cmd_current_screen(interaction: discord.Interaction):
+    await interaction.response.defer()
+    
+    res = query_monitor("GET_SCREENSHOT")
+    
+    if not res:
+        await interaction.followup.send("❌ Monitor is offline!", ephemeral=True)
+        return
+
+    if res.startswith("ERR:"):
+        await interaction.followup.send(f"⚠️ **Screenshot Error:** {res[4:]}", ephemeral=True)
+        return
+
+    try:
+        if os.path.exists(res):
+            file = discord.File(res, filename="roblox_ss.png")
+            await interaction.followup.send(
+                content="📸 **Current Roblox View:**",
+                file=file
+            )
+        else:
+            await interaction.followup.send("❌ Screenshot file not found on system.")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to send screenshot: {e}")
 
 
 # ─── RUN ──────────────────────────────────────────────────────────────────────

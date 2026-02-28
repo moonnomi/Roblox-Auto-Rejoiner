@@ -6,11 +6,12 @@
 ## What it is and What it Does
 This toolset allows you to AFK farm or play Roblox without worrying about crashes or sudden disconnections. It runs entirely on your local Windows PC and continuously monitors your active Roblox session. 
 
-If Roblox crashes, closes unexpectedly, or disconnects, the **Monitor** will detect this and automatically launch Roblox again, ensuring you instantly rejoin the exact same Place / server you were previously in.
+If Roblox crashes, freezes (Not Responding), or disconnects, the **Monitor** will detect this and automatically launch Roblox again, ensuring you instantly rejoin the exact same Place you were previously in.
 
 To give you remote control and updates, it comes with a **Discord Bot**. 
 - You can check your current AFK status right from Discord on your phone or PC.
-- See how many times Roblox has crashed and your total uptime.
+- See how many times Roblox has crashed or frozen and your total uptime.
+- **New Feature:** Capture a live screenshot of the Roblox window directly within Discord.
 - Instantly Force a rejoin or Pause the auto-rejoin system remotely.
 
 ---
@@ -33,7 +34,7 @@ To give you remote control and updates, it comes with a **Discord Bot**.
 2. Click on the address bar in File Explorer at the top, type `cmd`, and press **Enter**. This opens Command Prompt in that folder.
 3. Run the following command to download the required libraries:
 ```cmd
-pip install psutil discord.py requests
+pip install psutil discord.py requests Pillow pywin32
 ```
 
 ### Step 3 — Create Your Discord Bot
@@ -96,12 +97,13 @@ Once the bot is online in your server, you can type `/` to see its commands:
 
 | Command | Description |
 |---|---|
-| `/status` | Full monitor status overview (Running, paused, last crash) |
+| `/status` | Full monitor status overview (Optional: add `screenshot: True`) |
+| `/current_screen` | Captures a live screenshot of the Roblox window (requires it to be visible/focused) |
 | `/current_game` | Details on your current game, Place ID, and a direct link |
 | `/placeid` | Returns just the current Place ID |
-| `/crashes` | Shows total crash count and the exact time of the last crash |
+| `/crashes` | Shows total crash and freeze counts and timing |
 | `/uptime` | Displays how long the monitor has been actively running |
-| `/pause` | Pauses auto-rejoin. Helpful if you manually want to leave the game without being thrown back in! |
+| `/pause` | Pauses auto-rejoin monitoring |
 | `/resume` | Resumes auto-rejoin monitoring |
 | `/rejoin` | Forces a manual rejoin immediately |
 

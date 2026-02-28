@@ -7,7 +7,18 @@ import threading
 import os
 import sys
 import requests
+import re
 from datetime import datetime, timedelta
+
+# Requirements for screenshotting (will be added to README)
+try:
+    import win32gui
+    import win32ui
+    import win32con
+    from PIL import ImageGrab
+    HAS_SCREENSHOT_LIBS = True
+except ImportError:
+    HAS_SCREENSHOT_LIBS = False
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 PLACE_ID = "PUT_PLACE_ID_HERE"
@@ -70,7 +81,9 @@ state = {
     "monitoring": True,
     "roblox_running": False,
     "crash_count": 0,
+    "freeze_count": 0,
     "last_crash": None,
+    "last_freeze": None,
     "last_rejoin": None,
     "monitor_start": datetime.now().isoformat(),
     "place_id": PLACE_ID,
@@ -91,6 +104,66 @@ def is_roblox_running() -> bool:
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
     return False
+
+
+def is_roblox_frozen() -> bool:
+    """Checks if any Roblox process is 'Not Responding' using Windows tasklist."""
+    try:
+        # Use tasklist to find processes with 'Not Responding' status
+        output = subprocess.check_output(
+            'tasklist /FI "IMAGENAME eq RobloxPlayerBeta.exe" /FI "STATUS eq NOT RESPONDING"',
+            shell=True, stderr=subprocess.STDOUT
+        ).decode("utf-8", errors="ignore")
+        
+        return "RobloxPlayerBeta.exe" in output
+    except Exception:
+        return False
+
+
+def kill_roblox():
+    """Forcefully terminates all Roblox player processes."""
+    log("Force-closing Roblox processes...")
+    try:
+        subprocess.run('taskkill /F /IM RobloxPlayerBeta.exe /T', shell=True, capture_output=True)
+    except Exception as e:
+        log(f"Error while killing Roblox: {e}")
+
+
+def take_screenshot():
+    """Captures a screenshot of the Roblox window specifically."""
+    if not HAS_SCREENSHOT_LIBS:
+        return "ERR: PIL or pywin32 not installed"
+
+    hwnd = win32gui.FindWindow(None, "Roblox")
+    if not hwnd:
+        # Try finding by class name if window title is different
+        hwnd = win32gui.FindWindow("Win32Window0", "Roblox")
+    
+    if not hwnd:
+        return "ERR: Roblox window not found"
+
+    try:
+        # IMPORTANT: This tells Windows that our script is "DPI Aware".
+        # Without this, GetWindowRect returns logical coordinates that 
+        # don't match the physical pixels ImageGrab expects on high-res screens.
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
+        
+        # Get the window coordinates
+        rect = win32gui.GetWindowRect(hwnd)
+        
+        # Check if the window is minimized (logical coordinates go to -32000)
+        if rect[0] <= -32000:
+            return "ERR: Roblox window is minimized (cannot capture)"
+            
+        # Capture only the specific bounding box of the Roblox window
+        screenshot = ImageGrab.grab(bbox=rect, all_screens=True)
+        
+        filepath = os.path.join(os.getcwd(), "roblox_current.png")
+        screenshot.save(filepath)
+        return filepath
+    except Exception as e:
+        return f"ERR: {str(e)}"
 
 
 def launch_roblox():
@@ -138,9 +211,22 @@ def monitor_loop():
                 continue
 
         now_running = is_roblox_running()
+        is_frozen = is_roblox_frozen() if now_running else False
 
         with state_lock:
             state["roblox_running"] = now_running
+
+        if now_running and is_frozen:
+            freeze_time = datetime.now().isoformat()
+            log(f"❄️ Roblox is Not Responding! Detected freeze at {freeze_time}")
+            with state_lock:
+                state["freeze_count"] += 1
+                state["last_freeze"] = freeze_time
+                state["status_message"] = "Frozen! Force-closing..."
+            
+            kill_roblox()
+            time.sleep(2)
+            now_running = False # Trigger the rejoin logic below
 
         if was_running and not now_running:
             # Roblox just closed / crashed
@@ -198,6 +284,10 @@ def handle_client(conn, addr):
             with state_lock:
                 state["last_rejoin"] = datetime.now().isoformat()
             conn.sendall(b"OK: Rejoin command sent")
+
+        elif data == "GET_SCREENSHOT":
+            res = take_screenshot()
+            conn.sendall(res.encode("utf-8"))
 
         else:
             conn.sendall(b"ERR: Unknown command")
