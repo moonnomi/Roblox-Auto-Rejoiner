@@ -1,315 +1,424 @@
+import asyncio
+import json
+import os
+import socket
+from datetime import datetime
+
 import discord
 from discord import app_commands
 from discord.ext import tasks
-import socket
-import json
-import os
-from datetime import datetime, timezone
 
-# ─── CONFIG ───────────────────────────────────────────────────────────────────
-BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE" # Get this from the Discord Developer Portal when you create your bot
-GUILD_ID = None          # Set to your server's integer ID for instant slash cmd updates,
-                         # or leave None for global (takes up to 1 hour to propagate)
-CHANNEL_ID = None        # Set to the channel ID where crash announcements should be sent (integer)
+from config_manager import load_config
+
+
+BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+GUILD_ID = None
+CHANNEL_ID = None
 SOCKET_HOST = "127.0.0.1"
 SOCKET_PORT = 45678
-# ──────────────────────────────────────────────────────────────────────────────
+SOCKET_AUTH = ""
 
-# ─── COLORS ───────────────────────────────────────────────────────────────────
-COLOR_OK      = 0x57F287   # green
-COLOR_WARN    = 0xFEE75C   # yellow
-COLOR_ERR     = 0xED4245   # red
-COLOR_INFO    = 0x5865F2   # blurple
-# ──────────────────────────────────────────────────────────────────────────────
+COLOR_OK = 0x57F287
+COLOR_WARN = 0xFEE75C
+COLOR_ERR = 0xED4245
+COLOR_INFO = 0x5865F2
+MAX_MONITOR_RESPONSE = 1024 * 1024
+SOCKET_TIMEOUT = 2
+
+
+def _optional_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def reload_bot_config() -> None:
+    global BOT_TOKEN, GUILD_ID, CHANNEL_ID
+    global SOCKET_HOST, SOCKET_PORT, SOCKET_AUTH, guild_obj
+
+    config = load_config()
+    BOT_TOKEN = str(config.get("BOT_TOKEN", "PASTE_YOUR_BOT_TOKEN_HERE")).strip()
+    GUILD_ID = _optional_int(config.get("GUILD_ID"))
+    CHANNEL_ID = _optional_int(config.get("CHANNEL_ID"))
+    SOCKET_HOST = str(config.get("SOCKET_HOST", "127.0.0.1"))
+    SOCKET_PORT = _optional_int(config.get("SOCKET_PORT")) or 45678
+    SOCKET_AUTH = str(config.get("SOCKET_AUTH", ""))
+    guild_obj = discord.Object(id=GUILD_ID) if GUILD_ID else None
+
+
+guild_obj = None
+reload_bot_config()
 
 
 def query_monitor(command: str = "GET_STATE") -> dict | str | None:
-    """Send a command to the monitor socket and return the response."""
+    """Send one authenticated local command and return the bounded response."""
+    wire_command = f"{SOCKET_AUTH}:{command}" if SOCKET_AUTH else command
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(5)
-            s.connect((SOCKET_HOST, SOCKET_PORT))
-            s.sendall(command.encode("utf-8"))
-            data = b""
+        with socket.create_connection(
+            (SOCKET_HOST, SOCKET_PORT), timeout=SOCKET_TIMEOUT
+        ) as connection:
+            connection.settimeout(SOCKET_TIMEOUT)
+            connection.sendall(wire_command.encode("utf-8"))
+            chunks = []
+            received = 0
             while True:
-                chunk = s.recv(4096)
+                chunk = connection.recv(4096)
                 if not chunk:
                     break
-                data += chunk
-            response = data.decode("utf-8")
-            if command == "GET_STATE":
-                return json.loads(response)
+                received += len(chunk)
+                if received > MAX_MONITOR_RESPONSE:
+                    raise ValueError("Monitor response exceeded the size limit")
+                chunks.append(chunk)
+        response = b"".join(chunks).decode("utf-8")
+        if response.startswith("ERR:"):
             return response
-    except ConnectionRefusedError:
-        return None
-    except Exception as e:
+        return json.loads(response) if command == "GET_STATE" else response
+    except (ConnectionRefusedError, TimeoutError, OSError, UnicodeError, ValueError, json.JSONDecodeError):
         return None
 
 
-def fmt_time(iso: str | None) -> str:
-    if not iso:
+async def query_monitor_async(command: str = "GET_STATE") -> dict | str | None:
+    """Keep blocking socket I/O out of Discord's event loop."""
+    return await asyncio.to_thread(query_monitor, command)
+
+
+def fmt_time(value: str | None) -> str:
+    if not value:
         return "Never"
     try:
-        dt = datetime.fromisoformat(iso)
-        return f"<t:{int(dt.timestamp())}:R>"   # Discord relative timestamp
-    except Exception:
-        return iso
+        timestamp = datetime.fromisoformat(value).timestamp()
+        return f"<t:{int(timestamp)}:R>"
+    except (TypeError, ValueError):
+        return value
 
 
-def uptime_str(iso: str | None) -> str:
-    if not iso:
+def uptime_str(value: str | None) -> str:
+    if not value:
         return "Unknown"
     try:
-        dt = datetime.fromisoformat(iso)
-        delta = datetime.now() - dt
-        hours, rem = divmod(int(delta.total_seconds()), 3600)
-        mins, secs = divmod(rem, 60)
-        return f"{hours}h {mins}m {secs}s"
-    except Exception:
+        started = datetime.fromisoformat(value)
+        now = datetime.now(tz=started.tzinfo) if started.tzinfo else datetime.now()
+        seconds = max(0, int((now - started).total_seconds()))
+        days, remainder = divmod(seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        prefix = f"{days}d " if days else ""
+        return f"{prefix}{hours}h {minutes}m {seconds}s"
+    except (TypeError, ValueError, OverflowError):
         return "Unknown"
 
 
-# ─── BOT SETUP ────────────────────────────────────────────────────────────────
+def latest_incident(state: dict) -> str | None:
+    values = [
+        state.get("last_crash"),
+        state.get("last_freeze"),
+        state.get("last_disconnect"),
+    ]
+    present = [value for value in values if value]
+    return max(present) if present else None
+
 
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
-
-guild_obj = discord.Object(id=GUILD_ID) if GUILD_ID else None
+_bot_loop: asyncio.AbstractEventLoop | None = None
+_commands_synced = False
+_events_initialized = False
+_last_events = {"crash": None, "freeze": None, "disconnect": None}
 
 
 @client.event
 async def on_ready():
-    if guild_obj:
-        tree.copy_global_to(guild=guild_obj)
-        await tree.sync(guild=guild_obj)
-    else:
-        await tree.sync()
+    global _bot_loop, _commands_synced
+    _bot_loop = asyncio.get_running_loop()
+    reload_bot_config()
+    if not _commands_synced:
+        if guild_obj:
+            tree.copy_global_to(guild=guild_obj)
+            await tree.sync(guild=guild_obj)
+        else:
+            await tree.sync()
+        _commands_synced = True
     print(f"Bot online as {client.user}")
-    
     if not check_updates.is_running():
         check_updates.start()
 
 
-last_known_crash_time = None
-last_known_freeze_time = None
+async def _notification_channel():
+    if not CHANNEL_ID:
+        return None
+    channel = client.get_channel(CHANNEL_ID)
+    if channel:
+        return channel
+    try:
+        return await client.fetch_channel(CHANNEL_ID)
+    except discord.DiscordException:
+        return None
+
 
 @tasks.loop(seconds=5)
 async def check_updates():
-    global last_known_crash_time, last_known_freeze_time
+    global _events_initialized
     if not CHANNEL_ID:
         return
-        
-    state = query_monitor("GET_STATE")
-    if not isinstance(state, dict):
+
+    monitor_state = await query_monitor_async()
+    if not isinstance(monitor_state, dict):
         return
-        
-    channel = client.get_channel(CHANNEL_ID)
+
+    event_values = {
+        "crash": monitor_state.get("last_crash"),
+        "freeze": monitor_state.get("last_freeze"),
+        "disconnect": monitor_state.get("last_disconnect"),
+    }
+    if not _events_initialized:
+        _last_events.update(event_values)
+        _events_initialized = True
+        return
+
+    changed = [
+        event_name
+        for event_name, event_time in event_values.items()
+        if event_time and event_time != _last_events[event_name]
+    ]
+    _last_events.update(event_values)
+    if not changed:
+        return
+
+    channel = await _notification_channel()
     if not channel:
+        return
+
+    definitions = {
+        "crash": ("Roblox Crashed", "crash_count", "Total Crashes", COLOR_ERR),
+        "freeze": ("Roblox Froze", "freeze_count", "Total Freezes", COLOR_WARN),
+        "disconnect": (
+            "Roblox Disconnected",
+            "disconnect_count",
+            "Total Disconnects",
+            COLOR_WARN,
+        ),
+    }
+    for event_name in changed:
+        title, count_key, count_label, color = definitions[event_name]
+        embed = discord.Embed(
+            title=title,
+            description=(
+                f"**{monitor_state.get('game_name', 'Unknown')}** encountered a {event_name}. "
+                "Automatic recovery is in progress."
+            ),
+            color=color,
+        )
+        embed.add_field(name=count_label, value=str(monitor_state.get(count_key, 0)))
+        embed.add_field(name="Time", value=fmt_time(event_values[event_name]))
+        if event_name == "disconnect" and monitor_state.get("last_disconnect_reason"):
+            embed.add_field(
+                name="Detected marker",
+                value=f"`{monitor_state['last_disconnect_reason']}`",
+                inline=False,
+            )
         try:
-            channel = await client.fetch_channel(CHANNEL_ID)
-        except Exception:
-            return
+            await channel.send(embed=embed)
+        except discord.DiscordException as exc:
+            print(f"Failed to send {event_name} notification: {exc}")
 
-    # Check for Crashes
-    current_crash_time = state.get("last_crash")
-    if current_crash_time and current_crash_time != last_known_crash_time:
-        if last_known_crash_time is not None:
-            embed = discord.Embed(
-                title="💥 Roblox Crashed!",
-                description=f"Crash detected for **{state.get('game_name', 'Unknown')}**.\nRejoining in progress...",
-                color=COLOR_ERR
-            )
-            embed.add_field(name="Total Crashes", value=str(state.get("crash_count", 0)))
-            embed.add_field(name="Time", value=fmt_time(current_crash_time))
-            try:
-                await channel.send(embed=embed)
-            except Exception as e:
-                print(f"Failed to send crash notification: {e}")
-        last_known_crash_time = current_crash_time
-
-    # Check for Freezes
-    current_freeze_time = state.get("last_freeze")
-    if current_freeze_time and current_freeze_time != last_known_freeze_time:
-        if last_known_freeze_time is not None:
-            embed = discord.Embed(
-                title="❄️ Roblox Frozen!",
-                description=f"**{state.get('game_name', 'Unknown')}** is Not Responding.\nForce-closing and rejoining...",
-                color=COLOR_WARN
-            )
-            embed.add_field(name="Total Freezes", value=str(state.get("freeze_count", 0)))
-            embed.add_field(name="Time", value=fmt_time(current_freeze_time))
-            try:
-                await channel.send(embed=embed)
-            except Exception as e:
-                print(f"Failed to send freeze notification: {e}")
-        last_known_freeze_time = current_freeze_time
 
 @check_updates.before_loop
 async def before_check_updates():
     await client.wait_until_ready()
 
 
-# ─── SLASH COMMANDS ───────────────────────────────────────────────────────────
+async def _get_state_or_reply(interaction: discord.Interaction) -> dict | None:
+    monitor_state = await query_monitor_async()
+    if not isinstance(monitor_state, dict):
+        await _send_interaction(
+            interaction,
+            "Monitor is offline or returned an invalid response.",
+            ephemeral=True,
+        )
+        return None
+    return monitor_state
+
+
+async def _send_interaction(interaction: discord.Interaction, *args, **kwargs):
+    if interaction.response.is_done():
+        return await interaction.followup.send(*args, **kwargs)
+    return await interaction.response.send_message(*args, **kwargs)
+
 
 @tree.command(name="status", description="Show the full monitor status")
-@app_commands.describe(screenshot="Whether to include a screenshot of the Roblox window")
+@app_commands.describe(screenshot="Include a screenshot of the Roblox window")
 async def cmd_status(interaction: discord.Interaction, screenshot: bool = False):
-    state = query_monitor("GET_STATE")
-
-    if state is None:
-        embed = discord.Embed(
-            title="❌ Monitor Offline",
-            description="Cannot reach the monitor script. Make sure `roblox_monitor.py` is running.",
-            color=COLOR_ERR
-        )
-        await interaction.response.send_message(embed=embed)
+    if screenshot:
+        await interaction.response.defer()
+    monitor_state = await _get_state_or_reply(interaction)
+    if monitor_state is None:
         return
 
-    roblox_icon = "🟢" if state.get("roblox_running") else "🔴"
-    monitor_icon = "✅" if state.get("monitoring") else "⏸️"
+    running = bool(monitor_state.get("roblox_running"))
+    embed = discord.Embed(
+        title="Monitor Status",
+        color=COLOR_OK if running else COLOR_WARN,
+    )
+    embed.add_field(name="Roblox", value="Running" if running else "Not Running", inline=True)
+    embed.add_field(
+        name="Monitor",
+        value=monitor_state.get("status_message", "Unknown"),
+        inline=True,
+    )
+    embed.add_field(name="Crashes", value=str(monitor_state.get("crash_count", 0)), inline=True)
+    embed.add_field(name="Freezes", value=str(monitor_state.get("freeze_count", 0)), inline=True)
+    embed.add_field(
+        name="Disconnects",
+        value=str(monitor_state.get("disconnect_count", 0)),
+        inline=True,
+    )
+    embed.add_field(name="Last Incident", value=fmt_time(latest_incident(monitor_state)), inline=True)
+    embed.add_field(name="Last Rejoin", value=fmt_time(monitor_state.get("last_rejoin")), inline=True)
+    embed.add_field(
+        name="Monitor Uptime",
+        value=uptime_str(monitor_state.get("monitor_start")),
+        inline=True,
+    )
 
-    embed = discord.Embed(title="📊 Monitor Status", color=COLOR_OK if state.get("roblox_running") else COLOR_WARN)
-    embed.add_field(name="Roblox", value=f"{roblox_icon} {'Running' if state.get('roblox_running') else 'Not Running'}", inline=True)
-    embed.add_field(name="Monitor", value=f"{monitor_icon} {state.get('status_message', 'Unknown')}", inline=True)
-    embed.add_field(name="Crashes", value=f"💥 {state.get('crash_count', 0)}", inline=True)
-    embed.add_field(name="Freezes", value=f"❄️ {state.get('freeze_count', 0)}", inline=True)
-    embed.add_field(name="Last Crash/Freeze", value=fmt_time(state.get("last_crash") or state.get("last_freeze")), inline=True)
-    embed.add_field(name="Last Rejoin", value=fmt_time(state.get("last_rejoin")), inline=True)
-    embed.add_field(name="Monitor Uptime", value=uptime_str(state.get("monitor_start")), inline=True)
-    embed.set_footer(text="Roblox Auto-Rejoin Monitor")
-    
     if screenshot:
-        screenshot_path = query_monitor("GET_SCREENSHOT")
-        if screenshot_path and not screenshot_path.startswith("ERR:"):
-            file = discord.File(screenshot_path, filename="status_ss.png")
-            embed.set_image(url="attachment://status_ss.png")
-            await interaction.response.send_message(file=file, embed=embed)
-            return
-            
-    await interaction.response.send_message(embed=embed)
+        screenshot_path = await query_monitor_async("GET_SCREENSHOT")
+        if isinstance(screenshot_path, str) and not screenshot_path.startswith("ERR:"):
+            if os.path.isfile(screenshot_path):
+                screenshot_file = discord.File(screenshot_path, filename="roblox_status.png")
+                embed.set_image(url="attachment://roblox_status.png")
+                await _send_interaction(interaction, file=screenshot_file, embed=embed)
+                return
+        embed.add_field(
+            name="Screenshot",
+            value=screenshot_path or "Screenshot unavailable",
+            inline=False,
+        )
+    await _send_interaction(interaction, embed=embed)
 
 
 @tree.command(name="current_game", description="Show the game being monitored")
 async def cmd_current_game(interaction: discord.Interaction):
-    state = query_monitor("GET_STATE")
-
-    if state is None:
-        await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
+    monitor_state = await _get_state_or_reply(interaction)
+    if monitor_state is None:
         return
-
-    embed = discord.Embed(title="🎮 Current Game", color=COLOR_INFO)
-    embed.add_field(name="Name", value=state["game_name"], inline=False)
-    embed.add_field(name="Place ID", value=f"`{state['place_id']}`", inline=True)
-    embed.add_field(name="Link", value=f"[Open in Roblox]({state['game_url']})", inline=True)
+    embed = discord.Embed(title="Current Game", color=COLOR_INFO)
+    embed.add_field(name="Name", value=monitor_state.get("game_name", "Unknown"), inline=False)
+    embed.add_field(name="Place ID", value=f"`{monitor_state.get('place_id', 'Unknown')}`")
+    embed.add_field(name="Link", value=f"[Open in Roblox]({monitor_state.get('game_url', '')})")
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="placeid", description="Get the Place ID of the monitored game")
+@tree.command(name="placeid", description="Get the monitored Place ID")
 async def cmd_placeid(interaction: discord.Interaction):
-    state = query_monitor("GET_STATE")
-
-    if state is None:
-        await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
+    monitor_state = await _get_state_or_reply(interaction)
+    if monitor_state is None:
         return
-
     await interaction.response.send_message(
-        f"🎯 Place ID: `{state['place_id']}` — **{state['game_name']}**"
+        f"Place ID: `{monitor_state.get('place_id', 'Unknown')}` - "
+        f"**{monitor_state.get('game_name', 'Unknown')}**"
     )
 
 
-@tree.command(name="crashes", description="Show conflict and freeze history")
+@tree.command(name="crashes", description="Show crash, freeze, and disconnect history")
 async def cmd_crashes(interaction: discord.Interaction):
-    state = query_monitor("GET_STATE")
-
-    if state is None:
-        await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
+    monitor_state = await _get_state_or_reply(interaction)
+    if monitor_state is None:
         return
-
-    embed = discord.Embed(
-        title="💥 Crash & ❄️ Freeze Report", 
-        color=COLOR_WARN if (state.get("crash_count", 0) > 0 or state.get("freeze_count", 0) > 0) else COLOR_OK
+    has_incidents = any(
+        monitor_state.get(key, 0) > 0
+        for key in ("crash_count", "freeze_count", "disconnect_count")
     )
-    embed.add_field(name="Total Crashes", value=str(state.get("crash_count", 0)), inline=True)
-    embed.add_field(name="Total Freezes", value=str(state.get("freeze_count", 0)), inline=True)
-    embed.add_field(name="Last Crash", value=fmt_time(state.get("last_crash")), inline=True)
-    embed.add_field(name="Last Freeze", value=fmt_time(state.get("last_freeze")), inline=True)
-    embed.add_field(name="Last Rejoin", value=fmt_time(state.get("last_rejoin")), inline=True)
+    embed = discord.Embed(
+        title="Incident Report",
+        color=COLOR_WARN if has_incidents else COLOR_OK,
+    )
+    for label, singular, count_key, time_key in (
+        ("Crashes", "Crash", "crash_count", "last_crash"),
+        ("Freezes", "Freeze", "freeze_count", "last_freeze"),
+        ("Disconnects", "Disconnect", "disconnect_count", "last_disconnect"),
+    ):
+        embed.add_field(name=f"Total {label}", value=str(monitor_state.get(count_key, 0)))
+        embed.add_field(name=f"Last {singular}", value=fmt_time(monitor_state.get(time_key)))
+    embed.add_field(name="Last Rejoin", value=fmt_time(monitor_state.get("last_rejoin")), inline=False)
     await interaction.response.send_message(embed=embed)
 
 
 @tree.command(name="uptime", description="Show how long the monitor has been running")
 async def cmd_uptime(interaction: discord.Interaction):
-    state = query_monitor("GET_STATE")
-
-    if state is None:
-        await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
+    monitor_state = await _get_state_or_reply(interaction)
+    if monitor_state is None:
         return
-
-    embed = discord.Embed(title="⏱️ Uptime", color=COLOR_INFO)
-    embed.add_field(name="Monitor Started", value=fmt_time(state["monitor_start"]), inline=False)
-    embed.add_field(name="Running For", value=uptime_str(state["monitor_start"]), inline=False)
+    started = monitor_state.get("monitor_start")
+    embed = discord.Embed(title="Uptime", color=COLOR_INFO)
+    embed.add_field(name="Monitor Started", value=fmt_time(started), inline=False)
+    embed.add_field(name="Running For", value=uptime_str(started), inline=False)
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="pause", description="Pause the auto-rejoin monitor")
+async def _send_control(interaction: discord.Interaction, command: str, success: str):
+    result = await query_monitor_async(command)
+    if not isinstance(result, str):
+        await interaction.response.send_message("Monitor is offline.", ephemeral=True)
+    elif result.startswith("ERR:"):
+        await interaction.response.send_message(result[4:].strip(), ephemeral=True)
+    else:
+        await interaction.response.send_message(success)
+
+
+@tree.command(name="pause", description="Pause automatic monitoring")
 async def cmd_pause(interaction: discord.Interaction):
-    result = query_monitor("PAUSE")
-    if result is None:
-        await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
-    else:
-        await interaction.response.send_message("⏸️ Monitor paused. Use `/resume` to restart it.")
+    await _send_control(interaction, "PAUSE", "Monitor paused. Use `/resume` to continue.")
 
 
-@tree.command(name="resume", description="Resume the auto-rejoin monitor")
+@tree.command(name="resume", description="Resume automatic monitoring")
 async def cmd_resume(interaction: discord.Interaction):
-    result = query_monitor("RESUME")
-    if result is None:
-        await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
-    else:
-        await interaction.response.send_message("▶️ Monitor resumed! Watching for crashes.")
+    await _send_control(interaction, "RESUME", "Monitor resumed.")
 
 
-@tree.command(name="rejoin", description="Manually force a rejoin right now")
+@tree.command(name="rejoin", description="Force a clean rejoin now")
 async def cmd_rejoin(interaction: discord.Interaction):
-    result = query_monitor("REJOIN_NOW")
-    if result is None:
-        await interaction.response.send_message("❌ Monitor is offline!", ephemeral=True)
-    else:
-        await interaction.response.send_message("🔄 Rejoin command sent! Roblox should open shortly.")
+    await _send_control(interaction, "REJOIN_NOW", "Rejoin started.")
 
 
-@tree.command(name="current_screen", description="Take a screenshot of the Roblox window")
+@tree.command(name="current_screen", description="Capture the Roblox window")
 async def cmd_current_screen(interaction: discord.Interaction):
     await interaction.response.defer()
-    
-    res = query_monitor("GET_SCREENSHOT")
-    
-    if not res:
-        await interaction.followup.send("❌ Monitor is offline!", ephemeral=True)
-        return
+    screenshot_path = await query_monitor_async("GET_SCREENSHOT")
+    if not isinstance(screenshot_path, str):
+        await interaction.followup.send("Monitor is offline.", ephemeral=True)
+    elif screenshot_path.startswith("ERR:"):
+        await interaction.followup.send(screenshot_path[4:].strip(), ephemeral=True)
+    elif not os.path.isfile(screenshot_path):
+        await interaction.followup.send("Screenshot file was not found.", ephemeral=True)
+    else:
+        await interaction.followup.send(
+            content="Current Roblox view:",
+            file=discord.File(screenshot_path, filename="roblox_screen.png"),
+        )
 
-    if res.startswith("ERR:"):
-        await interaction.followup.send(f"⚠️ **Screenshot Error:** {res[4:]}", ephemeral=True)
-        return
 
+def stop_bot_sync(timeout: float = 10.0) -> bool:
+    if _bot_loop is None or not _bot_loop.is_running():
+        return False
+    future = asyncio.run_coroutine_threadsafe(client.close(), _bot_loop)
     try:
-        if os.path.exists(res):
-            file = discord.File(res, filename="roblox_ss.png")
-            await interaction.followup.send(
-                content="📸 **Current Roblox View:**",
-                file=file
-            )
-        else:
-            await interaction.followup.send("❌ Screenshot file not found on system.")
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed to send screenshot: {e}")
+        future.result(timeout=timeout)
+        return True
+    except Exception as exc:
+        print(f"Could not stop Discord bot cleanly: {exc}")
+        return False
 
 
-# ─── RUN ──────────────────────────────────────────────────────────────────────
+def main() -> None:
+    reload_bot_config()
+    if not BOT_TOKEN or BOT_TOKEN == "PASTE_YOUR_BOT_TOKEN_HERE":
+        raise SystemExit("Set BOT_TOKEN in config.json before starting the Discord bot.")
+    client.run(BOT_TOKEN)
+
 
 if __name__ == "__main__":
-    if BOT_TOKEN == "PASTE_YOUR_BOT_TOKEN_HERE":
-        print("ERROR: Please set your BOT_TOKEN in discord_bot.py before running!")
-        exit(1)
-    client.run(BOT_TOKEN)
+    main()

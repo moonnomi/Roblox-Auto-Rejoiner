@@ -1,123 +1,77 @@
-# Roblox Auto-Rejoin Monitor + Discord Bot
+# Roblox Auto-Rejoiner
+
+> [!NOTE]
+> This repository is archived and read-only. The project remains available as-is, including the network-aware recovery added for issue #2, but no further maintenance is planned.
 
 > [!IMPORTANT]
-> **Windows Only:** This tool is specifically designed for the Windows Roblox client and **will not work** on Linux or macOS.
+> This project supports the Windows Roblox client only.
 
-## What it is and What it Does
-This toolset allows you to AFK farm or play Roblox without worrying about crashes or sudden disconnections. It runs entirely on your local Windows PC and continuously monitors your active Roblox session. 
+Roblox Auto-Rejoiner watches the desktop Roblox client and automatically rejoins a configured Place when the client:
 
-If Roblox crashes, freezes (Not Responding), or disconnects, the **Monitor** will detect this and automatically launch Roblox again, ensuring you instantly rejoin the exact same Place you were previously in.
+- crashes or closes unexpectedly;
+- stops responding;
+- reports a connection loss, kick, or idle disconnect in its Player log.
 
-To give you remote control and updates, it comes with a **Discord Bot**. 
-- You can check your current AFK status right from Discord on your phone or PC.
-- See how many times Roblox has crashed or frozen and your total uptime.
-- **New Feature:** Capture a live screenshot of the Roblox window directly within Discord.
-- Instantly Force a rejoin or Pause the auto-rejoin system remotely.
+If the connection is offline, recovery waits until a Roblox endpoint is reachable. If Roblox does not start after a launch request, the monitor retries instead of silently giving up.
 
----
+An optional Discord bot provides remote status, screenshots, incident notifications, pause/resume controls, and manual rejoins.
 
-## Files Explained
-- `roblox_monitor.py` — The core system. It runs in the background, watches the Roblox game client, stores the current Place ID/Job ID, and triggers the auto-rejoin when a crash is detected.
-- `discord_bot.py` — The remote-control interface. Connects to your own Discord bot and provides interactive slash commands.
-- `requirements.txt` — A simple list of the Python packages needed to run these scripts.
+## Install
 
----
+Install Python 3.10 or newer, then run:
 
-## Setup Guide for Windows
-
-### Step 1 — Install Python
-1. Download from [python.org](https://python.org) (Version 3.10 or newer). 
-2. **Important:** When running the installer, make sure to **Check "Add Python to PATH"** at the bottom before clicking Install.
-
-### Step 2 — Install Dependencies
-1. Open the folder containing the downloaded code.
-2. Click on the address bar in File Explorer at the top, type `cmd`, and press **Enter**. This opens Command Prompt in that folder.
-3. Run the following command to download the required libraries:
 ```cmd
-pip install psutil discord.py requests Pillow pywin32
+python -m pip install -r requirements.txt
 ```
 
-### Step 3 — Create Your Discord Bot
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications).
-2. Click **New Application**, give it a name like "Roblox Monitor", and agree to the terms.
-3. Go to the **Bot** tab in the left sidebar.
-4. Click **Reset Token** → **copy the token** and save it somewhere safe (Keep it secret!).
-5. Scroll down to "Privileged Gateway Intents" and enable **Message Content Intent** (just in case).
-6. Go to **OAuth2 → URL Generator** in the sidebar.
-7. Under **Scopes**, check `bot` and `applications.commands`.
-8. Under **Bot Permissions**, check `Send Messages` and `Use Slash Commands`.
-9. Copy the generated URL at the bottom, paste it into your browser, and invite the bot to your personal Discord server.
+## Configure and run
 
-### Step 4 — Configure the Scripts
+The easiest option is the GUI:
 
-**1. Configure the Monitor**
-Right-click `roblox_monitor.py` and select **Edit with Notepad** (or any text editor). At the top, you will see a config section:
-```python
-# ─── CONFIG ───────────────────────────────────────────────────────────────────
-PLACE_ID = "PUT_PLACE_ID_HERE"
-REJOIN_DELAY = 5          # seconds to wait before rejoining after crash
-CHECK_INTERVAL = 3        # seconds between process checks
-SOCKET_HOST = "127.0.0.1"
-SOCKET_PORT = 45678
-# ──────────────────────────────────────────────────────────────────────────────
+```cmd
+python main_gui.py
 ```
-You only need to set the `PLACE_ID`. Replace `"PUT_PLACE_ID_HERE"` with the actual ID of your game. The **Game Name is now automatically detected** using the Roblox API! Save the file when done.
 
-**2. Configure the Discord Bot**
-Right-click `discord_bot.py` and select **Edit with Notepad**. Find the configuration section at the top:
-```python
-BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
-GUILD_ID = None
-CHANNEL_ID = None
-```
-- Replace `"PASTE_YOUR_BOT_TOKEN_HERE"` with the exact bot token you copied in Step 3.
-- **Important for Crash Announcements:** Change `CHANNEL_ID = None` to the ID of the Discord channel where you want the bot to post crash alerts (e.g., `CHANNEL_ID = 12345678901234`). To get a Channel ID, right-click the channel and click "Copy Channel ID" (requires Developer Mode).
-- *(Optional)* Set `GUILD_ID` to your Discord server's ID. This makes slash commands update instantly rather than waiting up to an hour. (To get the server ID, right-click your server icon and click "Copy Server ID"). Save the file when done.
+Enter the Roblox Place ID, rejoin delay, Discord bot token, and notification channel ID, then save the configuration. Settings are stored in a local `config.json`; this file contains the bot token and should never be committed or shared.
 
-### Step 5 — Run Everything
-You will need two Command Prompt windows running simultaneously in the folder where your scripts are.
+The monitor and bot can also be run separately:
 
-**Window 1 — The Monitor:**
 ```cmd
 python roblox_monitor.py
-```
-
-**Window 2 — The Discord Bot:**
-```cmd
 python discord_bot.py
 ```
 
-Make sure to leave both windows open! As long as they are running, your session is monitored and you can use Discord commands. Finally, simply join a Roblox game normally, and the monitor will pick it up automatically!
+Running either service for the first time creates `config.json` beside the scripts. At minimum, replace `PUT_PLACE_ID_HERE` with a numeric Place ID. The Discord fields are optional unless the bot is used.
 
----
+## Discord bot setup
 
-## Discord Commands Overview
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications).
+2. Add a bot and copy its token into the GUI or `config.json`.
+3. Invite it with the `bot` and `applications.commands` scopes and grant permission to send messages and attach files.
+4. Set `CHANNEL_ID` for automatic incident notifications. Setting `GUILD_ID` is optional and makes slash-command updates appear immediately in that server.
 
-Once the bot is online in your server, you can type `/` to see its commands:
+Available commands:
 
-| Command | Description |
-|---|---|
-| `/status` | Full monitor status overview (Optional: add `screenshot: True`) |
-| `/current_screen` | Captures a live screenshot of the Roblox window (requires it to be visible/focused) |
-| `/current_game` | Details on your current game, Place ID, and a direct link |
-| `/placeid` | Returns just the current Place ID |
-| `/crashes` | Shows total crash and freeze counts and timing |
-| `/uptime` | Displays how long the monitor has been actively running |
-| `/pause` | Pauses auto-rejoin monitoring |
-| `/resume` | Resumes auto-rejoin monitoring |
-| `/rejoin` | Forces a manual rejoin immediately |
+| Command | Purpose |
+| --- | --- |
+| `/status` | Show monitor state and optionally attach a screenshot |
+| `/current_screen` | Capture the Roblox window |
+| `/current_game` | Show the configured experience and link |
+| `/placeid` | Show the configured Place ID |
+| `/crashes` | Show crash, freeze, and disconnect history |
+| `/uptime` | Show monitor uptime |
+| `/pause` | Pause automatic monitoring and recovery |
+| `/resume` | Resume monitoring |
+| `/rejoin` | Force a clean rejoin |
 
----
+## How disconnect recovery works
 
-## Pro Tips & Troubleshooting
-- **Keep both CMD windows open** while you play or AFK. If you close them, it stops working.
-- If Roblox crashes, the monitor waits roughly 5 seconds (to ensure the process is fully closed) before auto-rejoining. 
-- You can change the wait time by editing `REJOIN_DELAY` inside `roblox_monitor.py`.
-- If slash commands don't show up in Discord right away, either wait a few minutes, restart the bot, or make sure you've set the `GUILD_ID` properly in the code.
+The monitor tails only newly written data from the latest Roblox Player log under `%LOCALAPPDATA%\Roblox\logs`. Existing disconnect messages are skipped on startup so an old incident cannot cause a false rejoin. When a new disconnect marker appears, Roblox is closed, the configured delay is applied, connectivity is checked, and launch attempts continue until Roblox starts or monitoring is stopped.
 
----
+## Build the Windows executable
+
+Run `build.cmd`. PyInstaller writes the executable to `dist\main_gui.exe`.
 
 ## Disclaimer
-This tool is not affiliated with, maintained, authorized, endorsed, or sponsored by Roblox Corporation or any of its affiliates or subsidiaries.
 
-**Use at your own risk.** Automated rejoining may violate certain game rules or platform policies. The developers of this tool are not responsible for any consequences resulting from its use.
+This project is not affiliated with, maintained, authorized, endorsed, or sponsored by Roblox Corporation. Automated rejoining may violate an individual experience's rules or platform policies. Use it at your own risk.
